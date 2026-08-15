@@ -1,4 +1,4 @@
-import type { TaskRecord } from "./types";
+import type { SystemStatus, TaskRecord } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -26,6 +26,20 @@ export async function createFailingTask(): Promise<TaskRecord> {
     body: JSON.stringify({ type: "fail", payload: {} }),
   });
   return handleResponse<TaskRecord>(res);
+}
+
+export async function createFlakyTask(failRate: number): Promise<TaskRecord> {
+  const res = await fetch(`${API_URL}/api/v1/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "flaky", payload: { fail_rate: failRate } }),
+  });
+  return handleResponse<TaskRecord>(res);
+}
+
+export async function getStatus(): Promise<SystemStatus> {
+  const res = await fetch(`${API_URL}/api/v1/status`);
+  return handleResponse<SystemStatus>(res);
 }
 
 export async function listTasks(): Promise<TaskRecord[]> {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { listTasks, retryTask, taskEventsUrl } from "./api";
 import NewTaskForm from "./components/NewTaskForm";
+import StatusPanel from "./components/StatusPanel";
 import TaskTable from "./components/TaskTable";
 import type { TaskRecord } from "./types";
 
@@ -70,6 +71,8 @@ export default function App() {
         <div className="mt-6">
           <NewTaskForm />
         </div>
+
+        <StatusPanel />
 
         <TaskTable tasks={tasks} onRetry={handleRetry} />
       </div>

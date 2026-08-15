@@ -13,7 +13,7 @@ from taskloom.queue import (
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
 
-SUPPORTED_TASK_TYPES = {"sleep", "fail"}
+SUPPORTED_TASK_TYPES = {"sleep", "fail", "flaky"}
 
 
 @router.post("/tasks", response_model=TaskRecord, status_code=201)
@@ -26,6 +26,13 @@ async def submit_task(task: TaskCreate, request: Request) -> TaskRecord:
         if not isinstance(duration, (int, float)) or duration <= 0:
             raise HTTPException(
                 status_code=422, detail="payload.duration must be a positive number"
+            )
+
+    if task.type == "flaky" and "fail_rate" in task.payload:
+        fail_rate = task.payload["fail_rate"]
+        if not isinstance(fail_rate, (int, float)) or not 0 <= fail_rate <= 1:
+            raise HTTPException(
+                status_code=422, detail="payload.fail_rate must be a number between 0 and 1"
             )
 
     redis = request.app.state.redis

@@ -38,7 +38,7 @@ then layering on production concerns one at a time.
   without needing a real flaky dependency — pick it from the dashboard's
   task-type dropdown
 
-## Phase 3 (current): Live updates via Server-Sent Events
+## Phase 3: Live updates via Server-Sent Events
 
 - Every task state change (create, active, completed, retry scheduled,
   failed, manual retry) is published as the full task record to a Redis
@@ -57,9 +57,32 @@ then layering on production concerns one at a time.
   matter which worker made the change or which API instance a given
   browser is connected to
 
+## Phase 4 (current): Rate limiting + circuit breaker
+
+No real external API to protect yet (that's Phase 5), so a `flaky` task type
+simulates one — an unreliable, rate-limited service the worker calls.
+
+- **Token bucket rate limiter**: a single atomic Redis Lua script (capacity 3,
+  refills 0.5/s by default) shared across every worker replica — no
+  app-level locking needed, since the whole read-refill-consume cycle runs
+  server-side in one round trip
+- **Circuit breaker**: `CLOSED` → `OPEN` (after 3 consecutive failures,
+  short-circuits calls immediately for a 10s cooldown, protecting a
+  struggling service from being hammered further) → `HALF_OPEN` (cooldown
+  elapsed, exactly one probe call let through) → back to `CLOSED` on
+  success or `OPEN` again on failure. Also Redis-backed via atomic Lua
+  scripts, so every worker replica agrees on the state and only one probe
+  is ever in flight at a time
+- Both mechanisms reuse Phase 2's retry/backoff/DLQ machinery rather than
+  inventing new plumbing: a rate-limited or breaker-rejected call just
+  raises a normal exception, which the worker already knows how to retry
+  with backoff or eventually dead-letter
+- New `GET /api/v1/status` endpoint + a dashboard status widget show live
+  breaker state and token count — pick `flaky` from the task-type dropdown
+  (with a configurable simulated fail rate) to trigger and watch both live
+
 ## Roadmap
 
-- **Phase 4** — Distributed rate limiting (token bucket) + circuit breaker for external API calls
 - **Phase 5** — Replace the `sleep` handler with real LLM-backed text summarization / PDF extraction
 
 ## Running locally

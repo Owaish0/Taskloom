@@ -29,7 +29,7 @@ async def process_task(redis, task_id: str) -> None:
     await set_status(redis, task_id, TaskStatus.ACTIVE)
     logger.info("processing task %s (type=%s, attempt %s/%s)", task_id, record.type, record.attempts + 1, record.max_attempts)
     try:
-        result = await handler(record.payload)
+        result = await handler(redis, record.payload)
     except Exception as exc:
         attempts = record.attempts + 1
         if attempts < record.max_attempts:
@@ -46,7 +46,10 @@ async def process_task(redis, task_id: str) -> None:
             )
             await set_status(redis, task_id, TaskStatus.FAILED, error=str(exc), attempts=attempts)
     else:
-        await set_status(redis, task_id, TaskStatus.COMPLETED, result=result)
+        # Clear any error left over from an earlier failed attempt — a task
+        # that failed once and then succeeded on retry should read as
+        # cleanly COMPLETED, not still show the stale error message.
+        await set_status(redis, task_id, TaskStatus.COMPLETED, result=result, error="")
         logger.info("task %s completed", task_id)
 
 

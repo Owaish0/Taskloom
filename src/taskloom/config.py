@@ -15,6 +15,14 @@ class Settings(BaseSettings):
     retry_backoff_base: float = 2.0
     retry_poll_interval: float = 1.0
 
+    # Rate limiting / circuit breaker (Phase 4) — sized for demoability, not
+    # production realism: small enough to trip both from the dashboard.
+    rate_limit_capacity: int = 3
+    rate_limit_refill_per_sec: float = 0.5
+    circuit_failure_threshold: int = 3
+    circuit_cooldown_seconds: float = 10.0
+    flaky_default_fail_rate: float = 0.5
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

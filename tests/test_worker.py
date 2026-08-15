@@ -18,7 +18,7 @@ async def redis():
 def always_fails(monkeypatch):
     """Registers a handler that always raises, and cleans it up afterward."""
 
-    async def handler(payload):
+    async def handler(redis, payload):
         raise RuntimeError("simulated failure")
 
     monkeypatch.setitem(HANDLERS, "always_fail", handler)
@@ -78,3 +78,83 @@ async def test_unknown_task_type_fails_immediately_without_retry(redis):
     fetched = await get_task(redis, record.id)
     assert fetched.status == TaskStatus.FAILED
     assert fetched.attempts == 0  # never actually "attempted" — no handler to run
+
+
+async def test_flaky_task_succeeds_and_records_breaker_success(redis, monkeypatch):
+    monkeypatch.setattr("taskloom.config.settings.rate_limit_capacity", 5)
+    record = await create_task(redis, "flaky", {"fail_rate": 0.0}, max_attempts=1)
+
+    await process_task(redis, record.id)
+
+    fetched = await get_task(redis, record.id)
+    assert fetched.status == TaskStatus.COMPLETED
+    assert "tokens_remaining" in fetched.result
+
+
+async def test_flaky_task_short_circuits_when_breaker_open(redis, monkeypatch):
+    from taskloom.circuitbreaker import record_failure
+
+    monkeypatch.setattr("taskloom.config.settings.circuit_failure_threshold", 1)
+    await record_failure(redis)  # trips the breaker open before the task ever runs
+
+    record = await create_task(redis, "flaky", {"fail_rate": 0.0}, max_attempts=1)
+    await process_task(redis, record.id)
+
+    fetched = await get_task(redis, record.id)
+    assert fetched.status == TaskStatus.FAILED
+    assert "circuit breaker" in fetched.error
+
+
+async def test_flaky_task_fails_when_rate_limited(redis, monkeypatch):
+    monkeypatch.setattr("taskloom.config.settings.rate_limit_capacity", 0)
+
+    record = await create_task(redis, "flaky", {"fail_rate": 0.0}, max_attempts=1)
+    await process_task(redis, record.id)
+
+    fetched = await get_task(redis, record.id)
+    assert fetched.status == TaskStatus.FAILED
+    assert "rate limit" in fetched.error
+
+
+async def test_completing_after_a_prior_failure_clears_the_stale_error(redis, monkeypatch):
+    """A task that fails once and then succeeds on retry should read as
+    cleanly COMPLETED — not still display the previous attempt's error."""
+    attempts_made = 0
+
+    async def fails_once_then_succeeds(redis, payload):
+        nonlocal attempts_made
+        attempts_made += 1
+        if attempts_made == 1:
+            raise RuntimeError("transient failure")
+        return {"ok": True}
+
+    monkeypatch.setitem(HANDLERS, "fails_once", fails_once_then_succeeds)
+    monkeypatch.setattr("taskloom.config.settings.retry_backoff_base", 0.0)
+
+    record = await create_task(redis, "fails_once", {}, max_attempts=3)
+    await process_task(redis, record.id)  # attempt 1: fails, retry scheduled
+    await promote_ready_retries(redis)
+    await process_task(redis, record.id)  # attempt 2: succeeds
+
+    fetched = await get_task(redis, record.id)
+    assert fetched.status == TaskStatus.COMPLETED
+    assert fetched.error is None
+    assert fetched.result == {"ok": True}
+
+
+async def test_flaky_task_failure_trips_the_breaker(redis, monkeypatch):
+    monkeypatch.setattr("taskloom.config.settings.rate_limit_capacity", 5)
+    monkeypatch.setattr("taskloom.config.settings.circuit_failure_threshold", 1)
+
+    record = await create_task(redis, "flaky", {"fail_rate": 1.0}, max_attempts=1)
+    await process_task(redis, record.id)
+
+    fetched = await get_task(redis, record.id)
+    assert fetched.status == TaskStatus.FAILED
+    assert "simulated external service error" in fetched.error
+    assert "open" in fetched.error  # breaker state reported in the message
+
+    from taskloom.circuitbreaker import check_allowed
+
+    allowed, _ = await check_allowed(redis)
+    assert allowed is False  # confirms the breaker actually tripped, not just the task

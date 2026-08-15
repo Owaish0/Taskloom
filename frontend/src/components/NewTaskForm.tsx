@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { createFailingTask, createSleepTask } from "../api";
+import { createFailingTask, createFlakyTask, createSleepTask } from "../api";
 
-type TaskKind = "sleep" | "fail";
+type TaskKind = "sleep" | "fail" | "flaky";
 
 export default function NewTaskForm() {
   const [kind, setKind] = useState<TaskKind>("sleep");
   const [duration, setDuration] = useState(3);
+  const [failRate, setFailRate] = useState(0.5);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -16,8 +17,10 @@ export default function NewTaskForm() {
     try {
       if (kind === "sleep") {
         await createSleepTask(duration);
-      } else {
+      } else if (kind === "fail") {
         await createFailingTask();
+      } else {
+        await createFlakyTask(failRate);
       }
       // No local refresh needed — the new task arrives via the SSE stream.
     } catch (err) {
@@ -44,6 +47,7 @@ export default function NewTaskForm() {
         >
           <option value="sleep">sleep</option>
           <option value="fail">fail (demo retries → DLQ)</option>
+          <option value="flaky">flaky (demo rate limit + circuit breaker)</option>
         </select>
       </div>
 
@@ -59,6 +63,24 @@ export default function NewTaskForm() {
             step={1}
             value={duration}
             onChange={(e) => setDuration(Number(e.target.value))}
+            className="w-32 rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-slate-500 focus:outline-none"
+          />
+        </div>
+      )}
+
+      {kind === "flaky" && (
+        <div className="flex flex-col gap-1">
+          <label htmlFor="failRate" className="text-sm font-medium text-slate-600">
+            Simulated fail rate (0–1)
+          </label>
+          <input
+            id="failRate"
+            type="number"
+            min={0}
+            max={1}
+            step={0.1}
+            value={failRate}
+            onChange={(e) => setFailRate(Number(e.target.value))}
             className="w-32 rounded-md border border-slate-300 px-3 py-1.5 text-sm focus:border-slate-500 focus:outline-none"
           />
         </div>

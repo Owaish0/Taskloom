@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from taskloom.api.routers.status import router as status_router
 from taskloom.api.routers.tasks import router as tasks_router
 from taskloom.config import settings
 from taskloom.redis_client import close_redis, get_redis
@@ -25,3 +26,4 @@ app.add_middleware(
 )
 
 app.include_router(tasks_router)
+app.include_router(status_router)
