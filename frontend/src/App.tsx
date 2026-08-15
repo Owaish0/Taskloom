@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { listTasks } from "./api";
+import { listTasks, retryTask } from "./api";
 import NewTaskForm from "./components/NewTaskForm";
 import TaskTable from "./components/TaskTable";
 import type { TaskRecord } from "./types";
@@ -23,19 +23,31 @@ export default function App() {
     return () => clearInterval(interval);
   }, [refresh]);
 
+  const handleRetry = useCallback(
+    (taskId: string) => {
+      retryTask(taskId)
+        .then(refresh)
+        .catch(() => {
+          // surfaced next poll if it didn't actually take
+        });
+    },
+    [refresh]
+  );
+
   return (
     <div className="min-h-screen bg-slate-50 px-6 py-10">
       <div className="mx-auto max-w-3xl">
         <h1 className="text-2xl font-semibold text-slate-900">Taskloom</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Submit a sleep task and watch it move through the queue.
+          Submit a task and watch it move through the queue — failed tasks retry with
+          backoff before landing in the dead-letter queue.
         </p>
 
         <div className="mt-6">
           <NewTaskForm onCreated={refresh} />
         </div>
 
-        <TaskTable tasks={tasks} />
+        <TaskTable tasks={tasks} onRetry={handleRetry} />
       </div>
     </div>
   );

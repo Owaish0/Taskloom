@@ -1,4 +1,4 @@
-export type TaskStatus = "pending" | "active" | "completed" | "failed";
+export type TaskStatus = "pending" | "active" | "completed" | "retry_scheduled" | "failed";
 
 export interface TaskRecord {
   id: string;

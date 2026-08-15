@@ -1,8 +1,21 @@
+import time
+
 import fakeredis.aioredis
 import pytest
 
 from taskloom.models import TaskStatus
-from taskloom.queue import create_task, dequeue, get_task, list_tasks, set_status
+from taskloom.queue import (
+    RETRY_QUEUE,
+    TaskNotRetryableError,
+    create_task,
+    dequeue,
+    get_task,
+    list_tasks,
+    promote_ready_retries,
+    retry_task,
+    schedule_retry,
+    set_status,
+)
 
 
 @pytest.fixture
@@ -68,3 +81,71 @@ async def test_list_tasks_respects_limit_and_offset(redis):
     assert len(page1) == 2
     assert len(page2) == 2
     assert page1[0].id != page2[0].id
+
+
+async def test_create_task_uses_configured_max_attempts(redis):
+    record = await create_task(redis, "sleep", {"duration": 1}, max_attempts=5)
+    assert record.max_attempts == 5
+
+
+async def test_schedule_retry_marks_retry_scheduled_and_parks_in_retry_queue(redis):
+    record = await create_task(redis, "fail", {})
+    await schedule_retry(redis, record.id, attempts=1, delay_seconds=30, error="boom")
+
+    fetched = await get_task(redis, record.id)
+    assert fetched.status == TaskStatus.RETRY_SCHEDULED
+    assert fetched.attempts == 1
+    assert fetched.error == "boom"
+
+    score = await redis.zscore(RETRY_QUEUE, record.id)
+    assert score is not None
+    assert score > time.time()  # scheduled in the future
+
+
+async def test_promote_ready_retries_only_promotes_elapsed_ones(redis):
+    ready = await create_task(redis, "fail", {})
+    not_ready = await create_task(redis, "fail", {})
+    await schedule_retry(redis, ready.id, attempts=1, delay_seconds=-1, error="boom")  # already due
+    await schedule_retry(redis, not_ready.id, attempts=1, delay_seconds=60, error="boom")
+
+    promoted = await promote_ready_retries(redis)
+
+    assert promoted == 1
+    ready_task = await get_task(redis, ready.id)
+    not_ready_task = await get_task(redis, not_ready.id)
+    assert ready_task.status == TaskStatus.PENDING
+    assert not_ready_task.status == TaskStatus.RETRY_SCHEDULED
+    assert await dequeue(redis, timeout=1) == ready.id
+
+
+async def test_promote_ready_retries_does_not_double_promote(redis):
+    record = await create_task(redis, "fail", {})
+    await schedule_retry(redis, record.id, attempts=1, delay_seconds=-1, error="boom")
+
+    first = await promote_ready_retries(redis)
+    second = await promote_ready_retries(redis)
+
+    assert first == 1
+    assert second == 0
+
+
+async def test_retry_task_resets_failed_task(redis):
+    record = await create_task(redis, "fail", {})
+    await set_status(redis, record.id, TaskStatus.FAILED, error="permanently dead", attempts=3)
+
+    retried = await retry_task(redis, record.id)
+
+    assert retried.status == TaskStatus.PENDING
+    assert retried.attempts == 0
+    assert retried.error is None
+    assert await dequeue(redis, timeout=1) == record.id
+
+
+async def test_retry_task_returns_none_for_missing_task(redis):
+    assert await retry_task(redis, "does-not-exist") is None
+
+
+async def test_retry_task_rejects_non_failed_task(redis):
+    record = await create_task(redis, "sleep", {"duration": 1})  # still PENDING
+    with pytest.raises(TaskNotRetryableError):
+        await retry_task(redis, record.id)

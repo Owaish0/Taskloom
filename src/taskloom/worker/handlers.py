@@ -12,6 +12,13 @@ async def sleep_handler(payload: dict[str, Any]) -> dict[str, Any]:
     return {"slept_for": duration}
 
 
+async def fail_handler(payload: dict[str, Any]) -> dict[str, Any]:
+    """Always raises. Exists to exercise (and demo) the retry / dead-letter
+    queue path without needing a real flaky dependency."""
+    raise RuntimeError(payload.get("message", "task configured to always fail"))
+
+
 HANDLERS: dict[str, HandlerFn] = {
     "sleep": sleep_handler,
+    "fail": fail_handler,
 }

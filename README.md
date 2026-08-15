@@ -10,7 +10,7 @@ Built iteratively, phase by phase — starting from the simplest possible task
 type (a "sleep" task that just waits N seconds) to prove out the plumbing,
 then layering on production concerns one at a time.
 
-## Phase 1 (current): Core pipeline
+## Phase 1: Core pipeline
 
 - FastAPI API: create/list/get tasks, health check
 - Redis-backed queue (plain Redis lists/hashes — no Celery)
@@ -19,9 +19,27 @@ then layering on production concerns one at a time.
 - React + Vite + Tailwind dashboard (polling-based live view)
 - Docker Compose orchestration
 
+## Phase 2 (current): Retries + dead-letter queue
+
+- Failed tasks retry with exponential backoff (`retry_backoff_base * 2^(attempt-1)`,
+  default 3 total attempts: 2s then 4s between retries) instead of failing outright
+- New `RETRY_SCHEDULED` status, tracked via a Redis sorted-set retry queue
+  (`queue:retry`, score = when the retry becomes ready) so a delayed retry
+  doesn't need to sit blocking anything
+- A retry-promoter loop runs alongside the worker's main consume loop,
+  moving ready retries back onto the pending queue — race-safe across
+  multiple worker replicas via atomic `ZREM`
+- Tasks that exhaust all attempts land in the dead-letter queue: status
+  `FAILED`, with the last error preserved
+- `POST /api/v1/tasks/{id}/retry` manually requeues a dead-lettered task,
+  resetting its attempt count — surfaced as a Retry button in the dashboard
+  for any `failed` row
+- Added a `fail` task type (always raises) purely to exercise/demo this path
+  without needing a real flaky dependency — pick it from the dashboard's
+  task-type dropdown
+
 ## Roadmap
 
-- **Phase 2** — Retry logic with backoff + dead-letter queue for permanently failed tasks
 - **Phase 3** — Server-Sent Events push endpoint; dashboard upgraded from polling to live push
 - **Phase 4** — Distributed rate limiting (token bucket) + circuit breaker for external API calls
 - **Phase 5** — Replace the `sleep` handler with real LLM-backed text summarization / PDF extraction

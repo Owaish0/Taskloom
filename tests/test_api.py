@@ -3,19 +3,26 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from taskloom.api.main import app
+from taskloom.models import TaskStatus
+from taskloom.queue import set_status
 
 
 @pytest.fixture
-async def client(monkeypatch):
-    fake = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    monkeypatch.setattr("taskloom.api.main.get_redis", lambda: fake)
-    monkeypatch.setattr("taskloom.api.main.close_redis", lambda: fake.aclose())
+async def fake_redis():
+    server = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    yield server
+    await server.aclose()
+
+
+@pytest.fixture
+async def client(monkeypatch, fake_redis):
+    monkeypatch.setattr("taskloom.api.main.get_redis", lambda: fake_redis)
+    monkeypatch.setattr("taskloom.api.main.close_redis", lambda: fake_redis.aclose())
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         async with app.router.lifespan_context(app):
             yield ac
-    await fake.aclose()
 
 
 async def test_health(client):
@@ -66,3 +73,38 @@ async def test_list_tasks(client):
     resp = await client.get("/api/v1/tasks")
     assert resp.status_code == 200
     assert len(resp.json()) == 2
+
+
+async def test_create_fail_task(client):
+    resp = await client.post("/api/v1/tasks", json={"type": "fail", "payload": {}})
+    assert resp.status_code == 201
+    assert resp.json()["status"] == "pending"
+
+
+async def test_retry_dead_task(client, fake_redis):
+    create_resp = await client.post("/api/v1/tasks", json={"type": "fail", "payload": {}})
+    task_id = create_resp.json()["id"]
+    await set_status(fake_redis, task_id, TaskStatus.FAILED, error="dead", attempts=3)
+
+    resp = await client.post(f"/api/v1/tasks/{task_id}/retry")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["attempts"] == 0
+
+
+async def test_retry_missing_task_returns_404(client):
+    resp = await client.post("/api/v1/tasks/does-not-exist/retry")
+    assert resp.status_code == 404
+
+
+async def test_retry_non_failed_task_returns_409(client):
+    create_resp = await client.post(
+        "/api/v1/tasks", json={"type": "sleep", "payload": {"duration": 1}}
+    )
+    task_id = create_resp.json()["id"]  # still PENDING
+
+    resp = await client.post(f"/api/v1/tasks/{task_id}/retry")
+
+    assert resp.status_code == 409

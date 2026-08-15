@@ -10,7 +10,8 @@ class TaskStatus(StrEnum):
     PENDING = "pending"
     ACTIVE = "active"
     COMPLETED = "completed"
-    FAILED = "failed"
+    RETRY_SCHEDULED = "retry_scheduled"
+    FAILED = "failed"  # terminal: exhausted retries, sitting in the dead-letter queue
 
 
 class TaskCreate(BaseModel):

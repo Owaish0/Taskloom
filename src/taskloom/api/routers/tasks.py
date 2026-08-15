@@ -1,11 +1,11 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from taskloom.models import TaskCreate, TaskRecord, TaskStatus
-from taskloom.queue import create_task, get_task, list_tasks
+from taskloom.queue import TaskNotRetryableError, create_task, get_task, list_tasks, retry_task
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
 
-SUPPORTED_TASK_TYPES = {"sleep"}
+SUPPORTED_TASK_TYPES = {"sleep", "fail"}
 
 
 @router.post("/tasks", response_model=TaskRecord, status_code=201)
@@ -28,6 +28,20 @@ async def submit_task(task: TaskCreate, request: Request) -> TaskRecord:
 async def read_task(task_id: str, request: Request) -> TaskRecord:
     redis = request.app.state.redis
     record = await get_task(redis, task_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return record
+
+
+@router.post("/tasks/{task_id}/retry", response_model=TaskRecord)
+async def retry_dead_task(task_id: str, request: Request) -> TaskRecord:
+    """Manually requeue a task that exhausted its retries and landed in the
+    dead-letter queue (status FAILED), resetting its attempt count."""
+    redis = request.app.state.redis
+    try:
+        record = await retry_task(redis, task_id)
+    except TaskNotRetryableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if record is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return record
