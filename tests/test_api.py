@@ -108,3 +108,9 @@ async def test_retry_non_failed_task_returns_409(client):
     resp = await client.post(f"/api/v1/tasks/{task_id}/retry")
 
     assert resp.status_code == 409
+
+# Note: the SSE endpoint (/api/v1/tasks/events) isn't tested through the HTTP
+# client here — httpx's ASGITransport fully drains the app's response before
+# returning anything, so it can't exercise a genuinely infinite stream. The
+# underlying generator (sse_task_events) is tested directly in test_queue.py
+# instead, and the route itself is verified live against the real Docker stack.

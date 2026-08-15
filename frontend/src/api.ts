@@ -37,3 +37,7 @@ export async function retryTask(taskId: string): Promise<TaskRecord> {
   const res = await fetch(`${API_URL}/api/v1/tasks/${taskId}/retry`, { method: "POST" });
   return handleResponse<TaskRecord>(res);
 }
+
+export function taskEventsUrl(): string {
+  return `${API_URL}/api/v1/tasks/events`;
+}

@@ -1,13 +1,9 @@
 import { useState } from "react";
 import { createFailingTask, createSleepTask } from "../api";
 
-interface Props {
-  onCreated: () => void;
-}
-
 type TaskKind = "sleep" | "fail";
 
-export default function NewTaskForm({ onCreated }: Props) {
+export default function NewTaskForm() {
   const [kind, setKind] = useState<TaskKind>("sleep");
   const [duration, setDuration] = useState(3);
   const [submitting, setSubmitting] = useState(false);
@@ -23,7 +19,7 @@ export default function NewTaskForm({ onCreated }: Props) {
       } else {
         await createFailingTask();
       }
-      onCreated();
+      // No local refresh needed — the new task arrives via the SSE stream.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
     } finally {

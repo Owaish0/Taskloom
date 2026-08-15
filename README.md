@@ -19,7 +19,7 @@ then layering on production concerns one at a time.
 - React + Vite + Tailwind dashboard (polling-based live view)
 - Docker Compose orchestration
 
-## Phase 2 (current): Retries + dead-letter queue
+## Phase 2: Retries + dead-letter queue
 
 - Failed tasks retry with exponential backoff (`retry_backoff_base * 2^(attempt-1)`,
   default 3 total attempts: 2s then 4s between retries) instead of failing outright
@@ -38,9 +38,27 @@ then layering on production concerns one at a time.
   without needing a real flaky dependency — pick it from the dashboard's
   task-type dropdown
 
+## Phase 3 (current): Live updates via Server-Sent Events
+
+- Every task state change (create, active, completed, retry scheduled,
+  failed, manual retry) is published as the full task record to a Redis
+  pub/sub channel (`task:events`) — the mechanism the API (which serves the
+  dashboard) uses to learn about changes made by the worker (a separate
+  process, only sharing Redis)
+- New `GET /api/v1/tasks/events` endpoint streams that channel to the
+  browser as Server-Sent Events, with periodic keep-alive comments so the
+  connection doesn't look dead to proxies while idle
+- The dashboard replaced its 1.5s polling loop with a single persistent
+  `EventSource` connection: one initial `GET /tasks` for the starting
+  snapshot, then every update after that arrives pushed, not fetched — a
+  "live" / "connecting…" indicator shows the connection state
+- Horizontally scales the same way the rest of the system does: every API
+  replica subscribes to the same channel independently, so it doesn't
+  matter which worker made the change or which API instance a given
+  browser is connected to
+
 ## Roadmap
 
-- **Phase 3** — Server-Sent Events push endpoint; dashboard upgraded from polling to live push
 - **Phase 4** — Distributed rate limiting (token bucket) + circuit breaker for external API calls
 - **Phase 5** — Replace the `sleep` handler with real LLM-backed text summarization / PDF extraction
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -14,6 +15,7 @@ from taskloom.models import TaskRecord, TaskStatus
 PENDING_QUEUE = "queue:pending"
 RETRY_QUEUE = "queue:retry"  # sorted set: score = unix ts when the retry becomes ready
 TASK_INDEX = "tasks:index"
+TASK_EVENTS_CHANNEL = "task:events"  # pub/sub: publishes the full TaskRecord JSON on every change
 
 
 class TaskNotRetryableError(Exception):
@@ -26,6 +28,15 @@ def _task_key(task_id: str) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _publish(redis: Redis, record: TaskRecord) -> None:
+    """Broadcast a task's current state to anyone subscribed to
+    TASK_EVENTS_CHANNEL — the API process forwards these to SSE clients.
+    The worker (which makes most of these changes) has no other way to
+    tell the API process a task changed; they're separate processes that
+    only share Redis."""
+    await redis.publish(TASK_EVENTS_CHANNEL, record.model_dump_json())
 
 
 def _encode(record: TaskRecord) -> dict[str, str]:
@@ -79,6 +90,7 @@ async def create_task(
         pipe.zadd(TASK_INDEX, {record.id: time.time()})
         pipe.rpush(PENDING_QUEUE, record.id)
         await pipe.execute()
+    await _publish(redis, record)
     return record
 
 
@@ -123,6 +135,9 @@ async def set_status(
     if attempts is not None:
         fields["attempts"] = str(attempts)
     await redis.hset(_task_key(task_id), mapping=fields)
+    updated = await get_task(redis, task_id)
+    if updated is not None:
+        await _publish(redis, updated)
 
 
 async def dequeue(redis: Redis, timeout: int) -> str | None:
@@ -164,6 +179,9 @@ async def promote_ready_retries(redis: Redis) -> int:
             mapping={"status": TaskStatus.PENDING.value, "updated_at": _now()},
         )
         await redis.rpush(PENDING_QUEUE, task_id)
+        updated = await get_task(redis, task_id)
+        if updated is not None:
+            await _publish(redis, updated)
         promoted += 1
     return promoted
 
@@ -191,4 +209,33 @@ async def retry_task(redis: Redis, task_id: str) -> TaskRecord | None:
     await redis.rpush(PENDING_QUEUE, task_id)
     updated = await get_task(redis, task_id)
     assert updated is not None
+    await _publish(redis, updated)
     return updated
+
+
+async def sse_task_events(
+    redis: Redis,
+    is_disconnected: Callable[[], Awaitable[bool]] | None = None,
+    poll_timeout: float = 15.0,
+) -> AsyncIterator[str]:
+    """Yields Server-Sent-Events-formatted chunks for every task update
+    published to TASK_EVENTS_CHANNEL, plus a keep-alive comment whenever
+    ``poll_timeout`` elapses with nothing new (keeps the connection from
+    looking dead to proxies/browsers). A plain function decoupled from
+    FastAPI's Request so it can be exercised directly in tests, instead of
+    through a full HTTP round-trip that most test HTTP clients (including
+    httpx's ASGITransport) can't stream incrementally anyway."""
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(TASK_EVENTS_CHANNEL)
+    try:
+        while True:
+            if is_disconnected is not None and await is_disconnected():
+                break
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout)
+            if message is None:
+                yield ": keep-alive\n\n"
+                continue
+            yield f"data: {message['data']}\n\n"
+    finally:
+        await pubsub.unsubscribe(TASK_EVENTS_CHANNEL)
+        await pubsub.aclose()

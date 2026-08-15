@@ -1,7 +1,15 @@
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 from taskloom.models import TaskCreate, TaskRecord, TaskStatus
-from taskloom.queue import TaskNotRetryableError, create_task, get_task, list_tasks, retry_task
+from taskloom.queue import (
+    TaskNotRetryableError,
+    create_task,
+    get_task,
+    list_tasks,
+    retry_task,
+    sse_task_events,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
 
@@ -22,6 +30,19 @@ async def submit_task(task: TaskCreate, request: Request) -> TaskRecord:
 
     redis = request.app.state.redis
     return await create_task(redis, task.type, task.payload)
+
+
+@router.get("/tasks/events")
+async def task_events(request: Request) -> StreamingResponse:
+    """Server-Sent Events stream of task updates. Registered before
+    /tasks/{task_id} so "events" isn't swallowed as a task_id — FastAPI
+    matches routes in registration order."""
+    redis = request.app.state.redis
+    return StreamingResponse(
+        sse_task_events(redis, is_disconnected=request.is_disconnected),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/tasks/{task_id}", response_model=TaskRecord)
