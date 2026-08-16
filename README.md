@@ -57,7 +57,7 @@ then layering on production concerns one at a time.
   matter which worker made the change or which API instance a given
   browser is connected to
 
-## Phase 4 (current): Rate limiting + circuit breaker
+## Phase 4: Rate limiting + circuit breaker
 
 No real external API to protect yet (that's Phase 5), so a `flaky` task type
 simulates one — an unreliable, rate-limited service the worker calls.
@@ -81,9 +81,34 @@ simulates one — an unreliable, rate-limited service the worker calls.
   breaker state and token count — pick `flaky` from the task-type dropdown
   (with a configurable simulated fail rate) to trigger and watch both live
 
-## Roadmap
+## Phase 5 (current): Real LLM-backed summarization
 
-- **Phase 5** — Replace the `sleep` handler with real LLM-backed text summarization / PDF extraction
+The `flaky` task type simulated an external service; `summarize` is the real
+one. Adds a `summarize` task type that calls the **Gemini API** (Google AI
+Studio's free tier — no billing setup needed) to actually summarize text,
+protected by Phase 4's rate limiter and circuit breaker rather than any new
+plumbing.
+
+- `llm.py`: lazy Gemini client singleton, same pattern as `redis_client.py`
+- `summarize_handler`: checks the circuit breaker, then the rate limiter
+  (same order as `flaky_handler` — no point spending a token on a call
+  about to be short-circuited), then calls `gemini-flash-latest`
+- API/network failures (`google.genai.errors.APIError`, covering both 4xx
+  rate limits and 5xx server errors) and content-safety declines both count
+  against the breaker and flow through the normal Phase 2 retry/DLQ path —
+  a `RuntimeError` is a `RuntimeError` as far as the worker is concerned,
+  real or simulated
+- **A real bug found via this integration**: newer Gemini models think by
+  default, and thinking tokens draw from the same `max_output_tokens`
+  budget as the visible response — a modest budget was entirely consumed
+  by thinking, returning an empty response with `finish_reason: MAX_TOKENS`.
+  Fixed by setting `thinking_config=ThinkingConfig(thinking_budget=0)`,
+  since a short summarization task doesn't need extended reasoning. The
+  same category of issue as Claude Opus 5's thinking-by-default behavior,
+  just a different vendor.
+- Requires a free key from [aistudio.google.com/apikey](https://aistudio.google.com/apikey)
+  in `GOOGLE_API_KEY` (see `.env.example`) — only the worker needs it, the
+  API process never calls the LLM directly
 
 ## Running locally
 
@@ -100,7 +125,9 @@ In another terminal, start a worker:
 uv run python -m taskloom.worker.main
 ```
 
-Requires Redis running locally (`redis-server`, or `docker run -p 6379:6379 redis:7-alpine`).
+Requires Redis running locally (`redis-server`, or `docker run -p 6379:6379 redis:7-alpine`),
+and a `GOOGLE_API_KEY` in `.env` for the `summarize` task type (optional —
+everything else works without it).
 
 ### Frontend
 

@@ -37,6 +37,15 @@ export async function createFlakyTask(failRate: number): Promise<TaskRecord> {
   return handleResponse<TaskRecord>(res);
 }
 
+export async function createSummarizeTask(text: string): Promise<TaskRecord> {
+  const res = await fetch(`${API_URL}/api/v1/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "summarize", payload: { text } }),
+  });
+  return handleResponse<TaskRecord>(res);
+}
+
 export async function getStatus(): Promise<SystemStatus> {
   const res = await fetch(`${API_URL}/api/v1/status`);
   return handleResponse<SystemStatus>(res);

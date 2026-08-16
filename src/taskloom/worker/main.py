@@ -4,6 +4,7 @@ import asyncio
 import logging
 
 from taskloom.config import settings
+from taskloom.llm import close_gemini_client
 from taskloom.models import TaskStatus
 from taskloom.queue import dequeue, get_task, promote_ready_retries, schedule_retry, set_status
 from taskloom.redis_client import close_redis, get_redis
@@ -83,6 +84,7 @@ async def run() -> None:
         await asyncio.gather(consume_loop(redis), retry_promoter_loop(redis))
     finally:
         await close_redis()
+        close_gemini_client()
 
 
 if __name__ == "__main__":

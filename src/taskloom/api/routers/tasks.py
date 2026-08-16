@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from taskloom.config import settings
 from taskloom.models import TaskCreate, TaskRecord, TaskStatus
 from taskloom.queue import (
     TaskNotRetryableError,
@@ -13,7 +14,7 @@ from taskloom.queue import (
 
 router = APIRouter(prefix="/api/v1", tags=["tasks"])
 
-SUPPORTED_TASK_TYPES = {"sleep", "fail", "flaky"}
+SUPPORTED_TASK_TYPES = {"sleep", "fail", "flaky", "summarize"}
 
 
 @router.post("/tasks", response_model=TaskRecord, status_code=201)
@@ -33,6 +34,16 @@ async def submit_task(task: TaskCreate, request: Request) -> TaskRecord:
         if not isinstance(fail_rate, (int, float)) or not 0 <= fail_rate <= 1:
             raise HTTPException(
                 status_code=422, detail="payload.fail_rate must be a number between 0 and 1"
+            )
+
+    if task.type == "summarize":
+        text = task.payload.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise HTTPException(status_code=422, detail="payload.text must be a non-empty string")
+        if len(text) > settings.summarize_max_input_chars:
+            raise HTTPException(
+                status_code=422,
+                detail=f"payload.text exceeds the {settings.summarize_max_input_chars}-character limit",
             )
 
     redis = request.app.state.redis

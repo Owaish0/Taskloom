@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     circuit_cooldown_seconds: float = 10.0
     flaky_default_fail_rate: float = 0.5
 
+    # Real LLM call (Phase 5) — what Phase 4's rate limiter/circuit breaker
+    # were actually built to protect. Gemini Flash by default: Google AI
+    # Studio's free tier needs no billing setup, unlike OpenAI/Anthropic.
+    google_api_key: str | None = None
+    summarize_model: str = "gemini-flash-latest"
+    summarize_max_tokens: int = 1024
+    summarize_max_input_chars: int = 50_000
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

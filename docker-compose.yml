@@ -28,6 +28,11 @@ services:
       dockerfile: docker/worker.Dockerfile
     environment:
       REDIS_URL: redis://redis:6379/0
+      # Read from a .env file in the project root (Docker Compose loads it
+      # automatically for ${...} substitution) — never hardcode a real key
+      # here. Only the worker calls the LLM, so only it needs this.
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+      SUMMARIZE_MODEL: ${SUMMARIZE_MODEL:-gemini-flash-latest}
     depends_on:
       redis:
         condition: service_healthy
